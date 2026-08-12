@@ -194,7 +194,7 @@ The application needs a mechanism to identify and propagate the current authenti
 - **SC-002**: All backend unit tests execute in under 10 seconds total
 - **SC-003**: All backend integration tests execute in under 30 seconds total
 - **SC-004**: Complete Docker Compose deployment initializes all services within 60 seconds
-- **SC-005**: Frontend application loads and renders initial page within 2 seconds in Docker environment
+- **SC-005**: Frontend application loads and renders initial page within 2 seconds, measured as time-to-first-render on a warm container (post-startup, not counting Docker Compose cold-start time) on a local development machine
 - **SC-006**: Database migrations execute successfully and complete schema setup within 5 seconds
 - **SC-007**: Seed data loads correctly so at least one request is accessible for each test user
 - **SC-008**: OpenAPI documentation is generated and includes all implemented endpoints
