@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-11
 
-**Status**: Draft
+**Status**: Approved
 
 **Input**: User description: "crie a estrutura de fundação de arquitetura deste projeto"
 
@@ -44,7 +44,7 @@ A developer needs a working data model and persistence layer that supports the `
 
 **Acceptance Scenarios**:
 
-1. **Given** the application is deployed, **When** a database query retrieves all requests, **Then** the system returns only requests belonging to the current authenticated user.
+1. **Given** the application is deployed, **When** a database query retrieves all requests, **Then** the system returns only requests belonging to the current user (as resolved by the CurrentUser abstraction).
 
 2. **Given** initial seed data exists, **When** the application starts, **Then** two requests exist for `cidadao-001` (status: EmAnalise, Aprovada) and one request exists for `cidadao-002` (status: Recebida).
 
@@ -171,6 +171,7 @@ The application needs a mechanism to identify and propagate the current authenti
 - **FR-018**: Application MUST be fully deployable via `docker compose up` including backend, frontend, migration, and MySQL
 - **FR-019**: Application MUST initialize with seed data for testing (2 requests for cidadao-001, 1 request for cidadao-002)
 - **FR-020**: Application architecture MUST separate concerns into Application, Domain, and Infrastructure layers to enable testability and evolution
+- **FR-021**: Backend MUST enforce `Solicitacao` status transitions as a closed set (Recebida→EmAnalise; EmAnalise→Aprovada; EmAnalise→Rejeitada); `Aprovada` and `Rejeitada` are terminal states; any other transition MUST be rejected with a domain error
 
 ### Key Entities
 
@@ -190,7 +191,7 @@ The application needs a mechanism to identify and propagate the current authenti
 
 ### Measurable Outcomes
 
-- **SC-001**: Backend API responds to health check within 100ms of startup
+- **SC-001**: Backend API's `GET /api/health` endpoint responds with p95 latency under 100ms on a warm container (post-startup, not counting Docker Compose cold-start time), measured on a local development machine
 - **SC-002**: All backend unit tests execute in under 10 seconds total
 - **SC-003**: All backend integration tests execute in under 30 seconds total
 - **SC-004**: Complete Docker Compose deployment initializes all services within 60 seconds
@@ -208,7 +209,7 @@ The application needs a mechanism to identify and propagate the current authenti
 - Entity Framework Core can be used for data access without custom ORM requirements
 - Development authentication can use a hardcoded user ID; OAuth/OIDC will be added in future specs
 - Initial user stories do not require user registration; users are known/pre-configured
-- Frontend can make unauthenticated calls to backend endpoints for MVP demonstration
+- Frontend can call backend endpoints without an authentication token for MVP demonstration; the CurrentUser abstraction still resolves a fixed development user server-side
 - Test databases can be created and destroyed on-demand during test runs
 - No data retention, compliance, or regulatory requirements are in scope for this foundation
 - Application will evolve incrementally; extensibility is more important than comprehensive feature coverage

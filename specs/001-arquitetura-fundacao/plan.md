@@ -1,6 +1,6 @@
 # Implementation Plan: Foundation Architecture Structure
 
-**Branch**: `main` | **Date**: 2026-08-12 | **Spec**: specs/001-arquitetura-fundacao/spec.md
+**Branch**: `001-arquitetura-fundacao` (recommended; work is currently tracked on `main` — see Complexity Tracking) | **Date**: 2026-08-12 | **Spec**: specs/001-arquitetura-fundacao/spec.md
 
 **Input**: Feature specification from `specs/001-arquitetura-fundacao/spec.md`
 
@@ -8,7 +8,7 @@
 
 ## Summary
 
-Deliver an executable foundation for the Solicitações application: an ASP.NET Core backend (layered: Api/Application/Domain/Infrastructure) with EF Core + MySQL persistence, a React + TypeScript frontend, CI-friendly testing infrastructure (unit, integration using real MySQL, HTTP tests), and a single-command Docker Compose environment that starts backend, frontend, migration, and MySQL. Provide OpenAPI documentation, centralized error handling, a CurrentUser abstraction, seed data, and the Solicitacao data model.
+Deliver an executable foundation for the Solicitações application: an ASP.NET Core backend (layered: Api/Application/Domain/Infrastructure) with EF Core + MySQL persistence, a React + TypeScript frontend, CI-friendly testing infrastructure (unit, integration using real MySQL, HTTP tests), and a single-command Docker Compose environment that starts backend, frontend, migration, and MySQL. Provide OpenAPI documentation, centralized error handling with domain exception types, a CurrentUser abstraction, seed data, and the Solicitacao data model with an explicit status-transition guard (FR-021).
 
 ## Technical Context
 
@@ -16,26 +16,35 @@ Deliver an executable foundation for the Solicitações application: an ASP.NET 
 
 **Primary Dependencies**: ASP.NET Core Web API, Entity Framework Core, Pomelo.EntityFrameworkCore.MySql, React, TypeScript, Docker, Docker Compose, xUnit
 
+**Frontend Build Tool**: Vite (constitution defers this "per feature spec" — decided here to unblock the test tooling decision below)
+
+**Frontend Test Runner**: Vitest + React Testing Library (Vite-native pairing; avoids the extra transform config Jest needs under Vite)
+
+**Frontend HTTP Client**: Browser `fetch` API (constitution Principle X — avoid an extra dependency when the platform API suffices)
+
 **Storage**: MySQL 8.x (relational) — persistent for development, ephemeral isolated instances for tests
 
-**Testing**: xUnit for backend unit and integration tests; Testcontainers.MySql for isolated MySQL test provisioning; React Testing Library + Jest for frontend component tests
+**Testing**: xUnit for backend unit and integration tests; Testcontainers.MySql for isolated MySQL test provisioning; React Testing Library + Vitest for frontend component tests
 
 **Target Platform**: Linux containers (Docker), development on Linux/macOS/Windows via Docker
 
 **Project Type**: Web application (backend API + frontend SPA)
 
 **Performance Goals**:
-- Health endpoint responds within 100ms under normal local conditions
+- Health endpoint p95 latency under 100ms on a warm container (SC-001)
 - Test suites run within target times defined in spec (unit <10s, integration <30s)
 
 **Constraints**:
-- Must run via `docker compose up` without host prerequisites
+- Must run via `docker compose up` without host prerequisites and without manual `.env` setup (every variable defaults)
 - Use real MySQL for integration tests (no in-memory substitute)
+- Migrations and API share a single backend image, differentiated by a `--migrate` startup argument (no separate migration image)
 
 **Scale/Scope**:
 - Initial baseline for single-instance development and CI; horizontal scaling out of scope for this plan
 
 ## Constitution Check
+
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
 Gates (based on constitution):
 - Separation of business logic from infrastructure: PASSED by design (Domain layer defined)
@@ -43,9 +52,10 @@ Gates (based on constitution):
 - Testability without framework initialization: PASSED (unit tests target domain/services)
 - MySQL real integration tests requirement: PASSED (Plan defines Testcontainers/Docker orchestration)
 - Explicit HTTP contracts (OpenAPI): PASSED (Swagger required)
-- Docker-composable local environment: PASSED (Docker Compose target)
+- Standardized error handling (Principle VII, custom exception types): PASSED — plan allocates `Domain/Exceptions/` and an error middleware that maps each exception type to an HTTP response
+- Docker-composable local environment (Principle XI, zero manual configuration, per-service Dockerfile): PASSED WITH NOTED DEVIATION — every compose env var gets a working default (no `.env` copy required); the `migration` service reuses the `backend` image with a `--migrate` argument instead of a dedicated migration Dockerfile (see Complexity Tracking); an nginx `/api` proxy keeps the stack reachable from a single origin
 
-No gate violations detected. Proceed to Phase 0.
+No unresolved gate violations. Proceed to Phase 0.
 
 ## Project Structure
 
@@ -75,11 +85,17 @@ backend/
 │   │   └── Interfaces/
 │   ├── Domain/
 │   │   ├── Entities/
+│   │   ├── Exceptions/
 │   │   ├── ValueObjects/
 │   │   └── Interfaces/
 │   └── Infrastructure/
 │       ├── Persistence/
+│       │   ├── Repositories/
+│       │   ├── EntityConfigurations/
+│       │   ├── Migrations/
+│       │   └── Seeds/
 │       └── Authentication/
+├── entrypoint.sh   # dual-mode: API by default, `--migrate` runs `dotnet ef database update`
 └── Dockerfile
 
 frontend/
@@ -88,16 +104,21 @@ frontend/
 │   ├── pages/
 │   ├── services/
 │   └── types/
+├── nginx.conf      # proxies /api to the backend service
 └── Dockerfile
 
-docker-compose.yml
+docker-compose.yml   # services: mysql, migration (backend image + --migrate), backend, frontend
 ```
 
-**Structure Decision**: Use two root-level projects for backend and frontend (backend/ and frontend/) matching the constitution and spec structure. This keeps the separation explicit and aligns with Docker Compose orchestration.
+**Structure Decision**: Use two root-level projects for backend and frontend (backend/ and frontend/) matching the constitution and spec structure. This keeps the separation explicit and aligns with Docker Compose orchestration. Migration is a runtime mode of the backend image rather than a fourth project, to avoid maintaining a near-duplicate image (see Complexity Tracking).
 
 ## Complexity Tracking
 
-No constitution violations identified; complexity tracking not required for Phase 0.
+Deviations from the constitution's literal structure, accepted as simplifications (Principle X):
+
+- **Single backend image for API + migrations**: Constitution XI describes "each service (backend, frontend, migration) has its own Dockerfile". This plan instead uses one backend image with a dual-mode entrypoint (`dotnet Api.dll` for the API; `--migrate` argument runs `dotnet ef database update` and exits) — an explicit project decision to avoid maintaining a near-duplicate second image. Still satisfies "zero manual configuration" and "migrations execute automatically on startup".
+- **Inline logging configuration**: Constitution structure lists `Infrastructure/Logging/`; this plan configures logging directly in `Program.cs` rather than a dedicated folder, since there is no logging abstraction beyond built-in `ILogger` yet (Principle IX — avoid premature abstraction).
+- **Branch naming**: The constitution's branching convention (`feat/###-feature-name`) conflicts with spec-kit's expected feature-branch pattern (`001-feature-name`) that `check-prerequisites.sh` relies on. This plan is tracked on `main`; recommend creating `001-arquitetura-fundacao` and reconciling the constitution's branching section in a separate amendment (out of scope for this plan).
 
 ---
 
@@ -105,7 +126,7 @@ No constitution violations identified; complexity tracking not required for Phas
 
 - No unresolved NEEDS CLARIFICATION markers found in the feature spec.
 - Research tasks: none required beyond validating chosen stack and test strategy.
-- Decision: Proceed with the specified stack (ASP.NET Core + EF Core + MySQL, React + TS) as documented in the constitution and spec.
+- Decision: Proceed with the specified stack (ASP.NET Core + EF Core + MySQL, React + TS + Vite + Vitest) as documented in the constitution and spec.
 
 Research artifacts created: research.md
 
@@ -114,17 +135,17 @@ Research artifacts created: research.md
 ## Phase 1: Design & Contracts (outputs: data-model.md, contracts/, quickstart.md)
 
 Planned artifacts:
-- data-model.md: canonical description of `Solicitacao` entity and related types
-- contracts/api.md: documented endpoints for health check and minimal request retrieval endpoints (open to expansion in feature specs)
-- quickstart.md: step-by-step instructions to start the full stack locally with Docker Compose and run basic verification
+- data-model.md: canonical description of `Solicitacao` entity (including the closed status-transition set and terminal states per FR-021) and related types
+- contracts/api.md: documented endpoints for health check and minimal request retrieval endpoints (open to expansion in feature specs); response DTO intentionally omits `cidadaoId` since every response is already scoped to the current user
+- quickstart.md: step-by-step instructions to start the full stack locally with Docker Compose (env defaults, no `.env` copy step; migrations run via `backend --migrate`) and run basic verification
 
-Agent context update: AGENTS.md will be updated to reference `specs/001-arquitetura-fundacao/plan.md`
+Agent context update: CLAUDE.md's `<!-- SPECKIT START -->…<!-- SPECKIT END -->` block updated to reference `specs/001-arquitetura-fundacao/plan.md`
 
 ---
 
 ## Outputs
 
-- BRANCH: main
+- BRANCH: main (recommended: 001-arquitetura-fundacao)
 - IMPL_PLAN: specs/001-arquitetura-fundacao/plan.md
 - Generated files: specs/001-arquitetura-fundacao/research.md, specs/001-arquitetura-fundacao/data-model.md, specs/001-arquitetura-fundacao/contracts/api.md, specs/001-arquitetura-fundacao/quickstart.md
 

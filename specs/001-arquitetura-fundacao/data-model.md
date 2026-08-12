@@ -18,16 +18,17 @@ Fields:
 - DataUltimaAtualizacao: timestamp (last update time)
 
 Validation rules:
-- Numero must be unique per request
+- Numero must be unique per request (enforced via a database-level unique constraint, not just an index)
 - CidadaoId must be present
 - Status must be one of the defined enum values
 - DataCriacao <= DataUltimaAtualizacao
 
-State transitions (initial):
+State transitions (closed set — FR-021):
 - Initial state: Recebida
 - Recebida -> EmAnalise
 - EmAnalise -> Aprovada
 - EmAnalise -> Rejeitada
+- Terminal states: Aprovada, Rejeitada (no further transitions permitted; a domain exception is thrown for any transition not listed above, including direct Recebida -> Aprovada/Rejeitada)
 
 ### CurrentUser (abstraction)
 - Id: string (e.g., "cidadao-001")

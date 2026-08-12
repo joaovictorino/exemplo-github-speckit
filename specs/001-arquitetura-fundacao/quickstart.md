@@ -39,13 +39,13 @@ dotnet test --project backend/tests/IntegrationTests
 ```
 
 ## Migrations
-- Migrations are executed automatically by the migration container during `docker compose up`.
-- To run migrations manually (from backend container):
+- The `migration` service in docker-compose.yml runs the same backend image as `backend`, with a `--migrate` argument, before `backend` and `frontend` start.
+- To run migrations manually:
 
 ```bash
-dotnet ef database update --project backend/src/Infrastructure/Persistence
+docker compose run --rm backend --migrate
 ```
 
 ## Notes
-- Environment variables are loaded from `.env` (template available at repo root).
-- Seed data is loaded automatically for development environment.
+- All environment variables have working defaults baked into docker-compose.yml; `.env.example` at the repo root is documentation only — no copy-to-`.env` step is required to run `docker compose up`.
+- Seed data is loaded automatically (as part of the `--migrate` step) for the development environment.
