@@ -10,8 +10,8 @@ Leia:
 
 - descrição do problema;
 - spec relacionada;
-- `docs/architecture.md`;
-- `docs/quality.md`;
+- `docs/base/architecture.md`;
+- `docs/base/quality.md`;
 - código relacionado;
 - testes relacionados.
 
