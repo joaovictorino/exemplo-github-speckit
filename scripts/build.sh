@@ -15,6 +15,14 @@ echo "==> Validando Docker Compose..."
 docker compose config --quiet
 
 echo
+echo "==> Compilando backend..."
+dotnet build "$ROOT_DIR/backend/Backend.sln"
+
+echo
+echo "==> Compilando frontend..."
+(cd "$ROOT_DIR/frontend" && npm run build)
+
+echo
 echo "==> Construindo imagens..."
 docker compose build
 

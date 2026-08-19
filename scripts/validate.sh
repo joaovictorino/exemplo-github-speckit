@@ -19,15 +19,23 @@ echo " VALIDATION"
 echo "========================================"
 
 echo
-echo "==> 1/4 Validando Docker Compose..."
+echo "==> 1/6 Validando Docker Compose..."
 docker compose config --quiet
 
 echo
-echo "==> 2/4 Executando build..."
+echo "==> 2/6 Executando build..."
 "$ROOT_DIR/scripts/build.sh"
 
 echo
-echo "==> 3/4 Inicializando aplicação..."
+echo "==> 3/6 Executando testes backend..."
+dotnet test "$ROOT_DIR/backend/Backend.sln"
+
+echo
+echo "==> 4/6 Executando testes frontend..."
+(cd "$ROOT_DIR/frontend" && npm test)
+
+echo
+echo "==> 5/6 Inicializando aplicação..."
 docker compose up -d
 
 echo
@@ -58,7 +66,7 @@ done
 echo "Backend saudável."
 
 echo
-echo "==> 4/4 Health check..."
+echo "==> 6/6 Health check..."
 curl -fsS http://localhost/api/health
 
 echo
