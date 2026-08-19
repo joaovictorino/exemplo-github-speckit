@@ -29,10 +29,14 @@ Internet
    │ HTTPS
    ▼
 Frontend — Azure Container Apps (ingresso externo)
-   │ chamadas /api por endereço interno
+   │ inicializa o Nginx com o endereço interno da API e encaminha /api
    ▼
 Backend — Azure Container Apps (ingresso interno)
-   │ conexão privada
+Migration — Azure Container Apps Job (sem ingresso)
+   │ identidade gerenciada atribuída pelo usuário: lê o segredo no Key Vault
+   ├──────────────► Azure Key Vault
+   │
+   │ conexão privada por Private Endpoint
    ▼
 Azure Database for MySQL Flexible Server (sem acesso público)
 
@@ -48,11 +52,14 @@ Terraform
                ├── Azure Container Apps Environment
                ├── Container App do frontend
                ├── Container App do backend
+               ├── Container Apps Job de migration
                ├── Azure Database for MySQL Flexible Server
-               └── Private DNS Zone do MySQL
+               ├── Private Endpoint e Private DNS Zone do MySQL
+               ├── Azure Key Vault
+               └── Identidade gerenciada atribuída pelo usuário
 ```
 
-O frontend será o único componente exposto à internet. O backend será acessível somente pelo ambiente de Container Apps. O servidor MySQL não terá endpoint ou regra de acesso público.
+O frontend será o único componente exposto à internet. O backend será acessível somente pelo ambiente de Container Apps. O servidor MySQL não terá acesso público: API e migration o alcançarão exclusivamente pelo Private Endpoint e pela zona DNS privada `privatelink.mysql.database.azure.com`.
 
 O estado do Terraform deverá ser armazenado remotamente em Azure Blob Storage, utilizando o backend azurerm.
 
@@ -83,7 +90,9 @@ Cada módulo deve ter uma responsabilidade clara e coesa. No mínimo, a estrutur
 * ambiente Azure Container Apps;
 * aplicação de frontend;
 * aplicação de backend;
-* MySQL privado.
+* MySQL privado, Private Endpoint e DNS privado;
+* Key Vault;
+* identidade gerenciada atribuída pelo usuário.
 
 Os módulos devem declarar explicitamente suas próprias variáveis, recursos e outputs. Dependências entre módulos devem ocorrer por inputs e outputs declarados, sem referências diretas a arquivos internos de outro módulo.
 
@@ -110,6 +119,8 @@ Devem ser provisionadas duas Container Apps independentes:
 
 As aplicações devem receber configurações necessárias por variáveis de ambiente e segredos gerenciados pela plataforma, sem incorporar dados sensíveis nas imagens.
 
+A API e o Job de migration devem compartilhar uma identidade gerenciada atribuída pelo usuário. Essa identidade deve possuir apenas as permissões necessárias para baixar imagens do registro e ler os segredos usados pelas duas cargas.
+
 ### RF06 — Exposição do frontend
 
 O frontend deve aceitar tráfego HTTPS externo e disponibilizar uma URL pública fornecida pelo Azure.
@@ -122,13 +133,15 @@ O backend deve possuir apenas ingresso interno, sem URL pública acessível pela
 
 O frontend deve encaminhar chamadas destinadas a `/api` para o endereço interno do backend, preservando os contratos HTTP já definidos nas SPECs 001 a 003.
 
+A imagem do frontend deve conter um script de inicialização que receba o endereço interno da API por variável de ambiente, valide-o e substitua somente um marcador previamente definido na configuração do Nginx antes de iniciar o servidor. A configuração local deve fornecer o endereço do serviço `backend`; o ambiente Azure deve fornecer o FQDN interno da API. O frontend não deve depender de endereço público da API.
+
 ### RF08 — MySQL privado
 
-Deve ser provisionado um Azure Database for MySQL Flexible Server com acesso por rede privada.
+Deve ser provisionado um Azure Database for MySQL Flexible Server com acesso privado por Azure Private Endpoint.
 
-O servidor deve ser associado a subnet delegada e Private DNS Zone adequadas. O acesso público deve permanecer desabilitado.
+O Private Endpoint deve ficar em subnet da VNet da aplicação e ser resolvido por uma Private DNS Zone `privatelink.mysql.database.azure.com` vinculada à VNet. O acesso público ao servidor deve permanecer desabilitado e não devem existir regras de firewall público.
 
-Somente o backend, por meio da rede privada e do DNS privado configurados, deve conseguir se conectar ao banco. O frontend não deve possuir credenciais nem rota de rede para o MySQL.
+Somente a API e o Job de migration, por meio da rede privada e do DNS privado configurados, devem conseguir se conectar ao banco. O frontend não deve possuir credenciais nem rota de rede para o MySQL.
 
 ### RF09 — Persistência e migrações
 
@@ -138,7 +151,7 @@ As migrations existentes no backend devem ser executadas de forma controlada ant
 
 ### RF10 — Configuração da aplicação
 
-O backend deve usar uma string de conexão compatível com o MySQL privado, fornecida como segredo.
+O backend e o Job de migration devem usar uma string de conexão compatível com o MySQL privado, fornecida pelo Azure Key Vault. A referência ao segredo deve usar a identidade gerenciada atribuída pelo usuário; a string de conexão não deve ser enviada como valor para as Container Apps nem para o Terraform.
 
 O frontend deve ser configurado para consumir a API pelo caminho `/api`, sem depender de endereço público do backend.
 
@@ -198,6 +211,12 @@ terraform init \
 
 Valores específicos de ambiente não devem ser codificados diretamente nos arquivos Terraform quando puderem ser fornecidos durante a inicialização.
 
+### RF14 — Automação one shot de deploy
+
+Deve existir um único script de automação para provisionar e publicar a aplicação. Ele deve validar os pré-requisitos, inicializar o Terraform com o backend remoto, criar a infraestrutura base necessária para o registro de imagens, compilar e publicar as imagens de frontend e backend no Azure Container Registry, gravar ou atualizar a string de conexão no Azure Key Vault, concluir o provisionamento das cargas e executar as migrations antes de validar a saúde da API e do frontend.
+
+O script deve aceitar uma tag de imagem informada pelo operador e, quando ela não for informada, usar uma tag derivada do commit atual. Ele deve falhar sem expor segredos e retornar erro quando qualquer etapa ou verificação de saúde não for bem-sucedida. Reexecuções devem reconciliar a infraestrutura e atualizar as imagens e o segredo sem exigir passos manuais no portal.
+
 ---
 
 ## 5. Requisitos de segurança
@@ -208,11 +227,11 @@ Nenhuma rota pública deve expor diretamente o backend ou o MySQL.
 
 ### RS02 — Segredos
 
-Senhas do MySQL, strings de conexão e outros valores sensíveis devem ser fornecidos fora do controle de versão e armazenados como segredos da plataforma quando consumidos pelas aplicações.
+Senhas do MySQL, strings de conexão e outros valores sensíveis devem ser fornecidos fora do controle de versão. A string de conexão deve ser gravada no Azure Key Vault pelo fluxo de automação e consumida pela API e pelo Job de migration por referência de segredo e identidade gerenciada; seu valor não pode ser exposto em logs, outputs ou configurações de Container Apps.
 
 ### RS03 — Rede privada
 
-A comunicação backend–MySQL deve ocorrer pela VNet. A resolução do nome do MySQL deve usar DNS privado e não depender de exceções temporárias de firewall público.
+A comunicação API/migration–MySQL deve ocorrer pela VNet e pelo Private Endpoint. A resolução do nome do MySQL deve usar a zona DNS privada `privatelink.mysql.database.azure.com` e não depender de exceções temporárias de firewall público.
 
 ---
 
@@ -264,7 +283,7 @@ Quando for tentada uma conexão pela internet pública
 
 Então a conexão deverá ser recusada.
 
-Quando o backend se conectar usando sua configuração privada
+Quando a API ou o Job de migration se conectar usando sua configuração privada
 
 Então deverá conseguir acessar o banco.
 
@@ -291,7 +310,7 @@ Então a informação deverá poder ser localizada no Log Analytics Workspace.
 Esta SPEC não inclui:
 
 * criação, gerenciamento ou cobrança da subscrição Azure;
-* CI/CD, pipelines de build, publicação automática de imagens ou GitHub Actions;
+* CI/CD, pipelines remotos de build ou GitHub Actions; o script one shot local descrito nesta SPEC faz parte do escopo;
 * múltiplos ambientes (desenvolvimento, homologação e produção);
 * domínio próprio, certificados personalizados, CDN, Azure Front Door, Application Gateway ou WAF;
 * autenticação de usuários finais além do mecanismo de demonstração já estabelecido;
@@ -306,8 +325,10 @@ Esta SPEC não inclui:
 ## 8. Premissas
 
 * A identidade que executará o Terraform possui permissões suficientes na subscrição existente para criar o Resource Group e os recursos listados.
-* A região escolhida oferece Azure Container Apps Environment com integração de VNet e Azure Database for MySQL Flexible Server com acesso privado.
-* As imagens de frontend e backend serão construídas a partir dos Dockerfiles definidos na SPEC 001 e disponibilizadas no Azure Container Registry.
+* A região escolhida oferece Azure Container Apps Environment com integração de VNet, Azure Database for MySQL Flexible Server com Private Endpoint e Azure Key Vault.
+* A identidade que executará o script possui permissões para provisionar os recursos, publicar imagens no ACR, criar ou atualizar o segredo no Key Vault e consultar a saúde das cargas.
+* A máquina que executará o script possui Azure CLI autenticada, Terraform e Docker disponíveis.
+* As imagens de frontend e backend serão construídas a partir dos Dockerfiles definidos na SPEC 001 e disponibilizadas no Azure Container Registry pelo script one shot.
 * O ambiente inicial é único e destinado à demonstração ou produção de pequeno porte.
 * Existe previamente um Azure Storage Account e um Blob Container acessíveis pela identidade que executará o Terraform para armazenamento remoto do state.
 * A identidade utilizada na execução possui permissões suficientes para ler e gravar o state no Blob Storage.
