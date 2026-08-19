@@ -36,8 +36,11 @@ Backend — Azure Container Apps (ingresso interno)
    ▼
 Azure Database for MySQL Flexible Server (sem acesso público)
 
-Terraform
-   └── Subscrição Azure existente
+Terraform 
+  ├── Backend remoto 
+│ |   └── Azure Blob Storage 
+│ |       └── terraform.tfstate   
+  └── Subscrição Azure existente
          └── Resource Group
                ├── Azure Container Registry
                ├── Log Analytics Workspace
@@ -50,6 +53,10 @@ Terraform
 ```
 
 O frontend será o único componente exposto à internet. O backend será acessível somente pelo ambiente de Container Apps. O servidor MySQL não terá endpoint ou regra de acesso público.
+
+O estado do Terraform deverá ser armazenado remotamente em Azure Blob Storage, utilizando o backend azurerm.
+
+O Storage Account e o container utilizados pelo backend remoto são considerados recursos de bootstrap da infraestrutura e devem existir antes da execução de terraform init. Eles não fazem parte do ciclo de vida dos recursos provisionados por esta SPEC.
 
 ---
 
@@ -84,7 +91,7 @@ Os módulos devem declarar explicitamente suas próprias variáveis, recursos e 
 
 O Terraform deve criar o Resource Group e todos os recursos necessários dentro dele.
 
-O Terraform não deve criar, excluir ou alterar a subscrição Azure existente, nem recursos externos ao Resource Group definido para esta aplicação.
+O Terraform não deve criar, excluir ou alterar recursos externos ao Resource Group da aplicação. O acesso ao Azure Blob Storage utilizado como backend remoto limita-se à leitura e gravação do estado Terraform e não implica gerenciamento do ciclo de vida desse Storage Account.
 
 ### RF04 — Registro de imagens
 
@@ -147,6 +154,50 @@ Deve haver instruções para autenticar no Azure, selecionar a subscrição exis
 
 O planejamento do Terraform deve permitir identificar previamente recursos a criar, alterar ou excluir.
 
+### RF13 — Backend remoto do Terraform
+
+O Terraform deve utilizar backend remoto azurerm para armazenamento do arquivo de estado em Azure Blob Storage.
+
+A configuração deve permitir informar, durante a inicialização do Terraform, os seguintes dados do backend:
+
+Resource Group que contém o Storage Account de estado;
+nome do Storage Account;
+nome do Blob Container;
+chave utilizada para identificar o arquivo de estado da aplicação.
+
+O arquivo terraform.tfstate não deve ser armazenado localmente como mecanismo principal de persistência e não deve ser versionado no repositório.
+
+O backend remoto deve ser inicializado por meio de terraform init, utilizando parâmetros externos ao código versionado quando necessário.
+
+Credenciais, access keys, SAS tokens ou outros segredos de acesso ao Storage Account não devem ser gravados no repositório.
+
+Sempre que possível, a autenticação no backend deverá utilizar a identidade autenticada no Azure, evitando credenciais estáticas.
+
+### Complemento ao RF12 — Operação do Terraform
+
+As instruções operacionais devem incluir:
+
+autenticação no Azure;
+seleção da subscrição existente;
+configuração das variáveis obrigatórias;
+configuração dos parâmetros do backend remoto Azure Blob Storage;
+execução de terraform init;
+execução de terraform plan;
+execução de terraform apply;
+obtenção da URL pública do frontend após o deploy.
+
+A inicialização deverá usar o backend remoto configurado para a aplicação, garantindo que execuções posteriores utilizem o mesmo estado compartilhado.
+
+Exemplo conceitual:
+
+terraform init \
+  -backend-config="resource_group_name=<rg-do-state>" \
+  -backend-config="storage_account_name=<storage-do-state>" \
+  -backend-config="container_name=<container-do-state>" \
+  -backend-config="key=<nome-do-state>.tfstate"
+
+Valores específicos de ambiente não devem ser codificados diretamente nos arquivos Terraform quando puderem ser fornecidos durante a inicialização.
+
 ---
 
 ## 5. Requisitos de segurança
@@ -174,6 +225,16 @@ Dado uma subscrição existente e variáveis válidas
 Quando o responsável executar o fluxo Terraform documentado
 
 Então o Resource Group e todos os recursos descritos nesta SPEC deverão ser criados sem etapas manuais no portal Azure.
+
+### Complemento ao AC01 — Provisionamento reprodutível
+
+Dado uma subscrição existente, um backend Azure Blob Storage previamente disponível e variáveis válidas
+
+Quando o responsável inicializar o Terraform utilizando o backend remoto documentado e executar o fluxo de provisionamento
+
+Então o Terraform deverá utilizar o estado armazenado no Azure Blob Storage
+
+E o Resource Group da aplicação e todos os recursos descritos nesta SPEC deverão ser criados sem etapas manuais no portal Azure.
 
 ### AC02 — Acesso público controlado
 
@@ -236,6 +297,9 @@ Esta SPEC não inclui:
 * autenticação de usuários finais além do mecanismo de demonstração já estabelecido;
 * alta disponibilidade multi-região, recuperação de desastre ou escalabilidade além das configurações básicas do Container Apps;
 * acesso administrativo público ao MySQL.
+* provisionamento inicial do Storage Account e do Blob Container utilizados como backend remoto do Terraform;
+* implementação de mecanismos avançados de governança do state, como replicação entre regiões ou políticas corporativas de retenção;
+* criação ou administração da subscrição Azure.
 
 ---
 
@@ -245,3 +309,7 @@ Esta SPEC não inclui:
 * A região escolhida oferece Azure Container Apps Environment com integração de VNet e Azure Database for MySQL Flexible Server com acesso privado.
 * As imagens de frontend e backend serão construídas a partir dos Dockerfiles definidos na SPEC 001 e disponibilizadas no Azure Container Registry.
 * O ambiente inicial é único e destinado à demonstração ou produção de pequeno porte.
+* Existe previamente um Azure Storage Account e um Blob Container acessíveis pela identidade que executará o Terraform para armazenamento remoto do state.
+* A identidade utilizada na execução possui permissões suficientes para ler e gravar o state no Blob Storage.
+* O backend remoto utilizará o provider/backend azurerm e será configurado antes do provisionamento dos recursos da aplicação.
+* O estado remoto é considerado infraestrutura de bootstrap e possui ciclo de vida independente do Resource Group da aplicação.
