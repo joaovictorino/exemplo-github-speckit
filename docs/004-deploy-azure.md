@@ -37,7 +37,7 @@ Migration — Azure Container Apps Job (sem ingresso)
    │ identidade gerenciada atribuída pelo usuário: lê o segredo no Key Vault
    ├──────────────► Azure Key Vault
    │
-   │ conexão privada por Private Endpoint
+   │ conexão privada por VNet Integration
    ▼
 Azure Database for MySQL Flexible Server (sem acesso público)
 
@@ -61,10 +61,10 @@ Terraform
          │      └── Container Apps Job de migration
          └── Resource Group de banco de dados (rg-banco-dados)
                 ├── Azure Database for MySQL Flexible Server
-                └── Private Endpoint do MySQL
+                └── Subnet delegada ao MySQL (VNet Integration)
 ```
 
-O frontend, publicado em Azure Static Web Apps, será o único componente exposto à internet. O backend permanecerá com ingresso apenas interno ao ambiente de Container Apps, sem endpoint público: o Static Web App alcança a API por meio de um linked backend nativo do plano Standard, mecanismo em que o Azure gerencia a conexão entre o SWA e o Container App sem exigir ingresso externo no backend. O servidor MySQL não terá acesso público: API e migration o alcançarão exclusivamente pelo Private Endpoint e pela zona DNS privada `privatelink.mysql.database.azure.com`.
+O frontend, publicado em Azure Static Web Apps, será o único componente exposto à internet. O backend permanecerá com ingresso apenas interno ao ambiente de Container Apps, sem endpoint público: o Static Web App alcança a API por meio de um linked backend nativo do plano Standard, mecanismo em que o Azure gerencia a conexão entre o SWA e o Container App sem exigir ingresso externo no backend. O servidor MySQL não terá acesso público: API e migration o alcançarão exclusivamente pela VNet Integration e pela zona DNS privada `privatelink.mysql.database.azure.com`.
 
 Os recursos da aplicação serão distribuídos em quatro Resource Groups, cada um com uma responsabilidade única — área (plataforma compartilhada), redes, aplicação e banco de dados —, todos criados e administrados pelo mesmo código Terraform. Todos os recursos provisionados nesses Resource Groups devem receber a estrutura de tags uniforme definida em RF15.
 
@@ -99,7 +99,7 @@ Cada módulo deve ter uma responsabilidade clara e coesa. No mínimo, a estrutur
 * ambiente Azure Container Apps;
 * aplicação de frontend (Azure Static Web Apps e linked backend);
 * aplicação de backend;
-* MySQL privado, Private Endpoint e DNS privado;
+* MySQL privado, VNet Integration e DNS privado;
 * Key Vault;
 * identidade gerenciada atribuída pelo usuário;
 * tags padrão aplicadas aos recursos.
@@ -146,9 +146,9 @@ Em **ambiente local (Docker Compose)**, este requisito não se aplica ao Static 
 
 ### RF08 — MySQL privado
 
-Deve ser provisionado, no Resource Group de banco de dados, um Azure Database for MySQL Flexible Server com acesso privado por Azure Private Endpoint.
+Deve ser provisionado, no Resource Group de banco de dados, um Azure Database for MySQL Flexible Server com acesso privado por VNet Integration (subnet delegada ao serviço). Este é o mecanismo de acesso privado real do Azure Database for MySQL Flexible Server: o serviço não oferece suporte a Azure Private Link/Private Endpoint.
 
-O Private Endpoint deve ficar em subnet da VNet da aplicação e ser resolvido por uma Private DNS Zone `privatelink.mysql.database.azure.com` vinculada à VNet. O acesso público ao servidor deve permanecer desabilitado e não devem existir regras de firewall público.
+A subnet delegada deve ficar na VNet da aplicação e o host do servidor deve ser resolvido por uma Private DNS Zone `privatelink.mysql.database.azure.com` vinculada à VNet. O acesso público ao servidor deve permanecer desabilitado e não devem existir regras de firewall público.
 
 Somente a API e o Job de migration, por meio da rede privada e do DNS privado configurados, devem conseguir se conectar ao banco. O frontend não deve possuir credenciais nem rota de rede para o MySQL.
 
@@ -257,7 +257,7 @@ Senhas do MySQL, strings de conexão e outros valores sensíveis devem ser forne
 
 ### RS03 — Rede privada
 
-A comunicação API/migration–MySQL deve ocorrer pela VNet e pelo Private Endpoint. A resolução do nome do MySQL deve usar a zona DNS privada `privatelink.mysql.database.azure.com` e não depender de exceções temporárias de firewall público.
+A comunicação API/migration–MySQL deve ocorrer pela VNet, via VNet Integration. A resolução do nome do MySQL deve usar a zona DNS privada `privatelink.mysql.database.azure.com` e não depender de exceções temporárias de firewall público.
 
 ### RS04 — Conexão privada do frontend ao backend
 
@@ -355,7 +355,7 @@ Esta SPEC não inclui:
 ## 8. Premissas
 
 * A identidade que executará o Terraform possui permissões suficientes na subscrição existente para criar os quatro Resource Groups (área, aplicação, banco de dados e redes) e os recursos listados.
-* A região escolhida oferece Azure Container Apps Environment com integração de VNet, Azure Database for MySQL Flexible Server com Private Endpoint, Azure Key Vault e Azure Static Web Apps plano Standard com suporte a linked backend para Azure Container Apps.
+* A região escolhida oferece Azure Container Apps Environment com integração de VNet, Azure Database for MySQL Flexible Server com VNet Integration, Azure Key Vault e Azure Static Web Apps plano Standard com suporte a linked backend para Azure Container Apps.
 * A identidade que executará o script possui permissões para provisionar os recursos, publicar a imagem de backend no ACR, publicar o artefato do frontend no Static Web Apps, criar ou atualizar o segredo no Key Vault e consultar a saúde das cargas.
 * A máquina que executará o script possui Azure CLI autenticada, Terraform e Docker disponíveis.
 * A imagem de backend será construída a partir do Dockerfile definido na SPEC 001 e disponibilizada no Azure Container Registry pelo script one shot. O frontend será construído como artefato estático e publicado diretamente no Azure Static Web Apps; em ambiente local, o Docker Compose continua utilizando o Dockerfile de frontend definido na SPEC 001 para simular o proxy reverso.
